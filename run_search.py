@@ -3,7 +3,7 @@ import pickle
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from scripts.llm import request_to_embed
+from llm import request_to_embed
 from dotenv import load_dotenv
 
 load_dotenv()

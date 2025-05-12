@@ -5,7 +5,7 @@ import pickle
 import numpy as np
 import plotly.graph_objs as go
 from plotly.subplots import make_subplots
-from scripts.llm import request_to_embed
+from llm import request_to_embed
 
 # ─── 設定 ───────────────────────────────────────────
 # 1度だけ定義する軸ワード（左, 右, 上, 下）
