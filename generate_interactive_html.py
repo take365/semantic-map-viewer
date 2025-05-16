@@ -1,103 +1,163 @@
+import argparse
 import pickle
 import json
 from pathlib import Path
+import pandas as pd
 
-# 入出力ファイルパス
-EMBED_KEYWORD_PATH = "data/embed_keyword.pkl"
-EMBED_ITEMS_PATH = "data/embedded_items.pkl"
-HTML_OUTPUT_PATH = "embedding_explorer.html"
+def main():
+    parser = argparse.ArgumentParser(description="embedding_explorer.html を生成")
+    parser.add_argument("folder", help="data 配下のサブフォルダ名 (例: sample, overflow)")
+    args = parser.parse_args()
 
-# 固定カテゴリ
-CATEGORIES = ["施設", "職業", "素材", "動物・魚", "料理"]
+    base_dir = Path(__file__).parent / "data" / args.folder
+    item_path = base_dir / f"embedded_items_{args.folder}.pkl"
 
-# Load pickle files
-with open(EMBED_KEYWORD_PATH, "rb") as f:
-    keyword_data = pickle.load(f)
+    with open(item_path, "rb") as f:
+        items_data = pickle.load(f)
 
-with open(EMBED_ITEMS_PATH, "rb") as f:
-    items_df = pickle.load(f)
+    args_path = base_dir / "args.csv"
+    if args_path.exists():
+        df = pd.read_csv(args_path)
+    else:
+        df = pd.DataFrame({"argument": items_data["texts"]})
+        df["カテゴリ"] = "カテゴリA"
+        df["絵文字"] = "□"
 
-# JSON変換（embeddingはそのまま浮動小数）
-keywords_json = json.dumps(keyword_data, ensure_ascii=False)
-items_json = items_df.to_json(orient="records", force_ascii=False)
-categories_json = json.dumps(CATEGORIES, ensure_ascii=False)
+    items = [
+        {
+            "内容": df["argument"][i],
+            "絵文字": df["絵文字"][i] if "絵文字" in df else "□",
+            "カテゴリ": df["カテゴリ"][i] if "カテゴリ" in df else "カテゴリA",
+            **{k: v[i] for k, v in items_data["embeddings"].items()}
+        }
+        for i in range(len(items_data["texts"]))
+    ]
 
-# ─── HTML テンプレート全体 ──────────────────────────────
-html = f"""
+    keyword_data = {}
+    for model_key in items_data["embeddings"].keys():
+        model_path = base_dir / f"keyword_embed_{model_key}.pkl"
+        if not model_path.exists():
+            print(f"⚠️ keyword_embed_{model_key}.pkl が見つかりません。スキップ。")
+            continue
+        with open(model_path, "rb") as f:
+            emb = pickle.load(f)
+        for kw, vec in emb.items():
+            keyword_data.setdefault(kw, {})[model_key] = vec
+
+    models = list(items_data["embeddings"].keys())
+    categories = sorted(df["カテゴリ"].unique().tolist())
+    items_json = json.dumps(items, ensure_ascii=False)
+    keyword_json = json.dumps(keyword_data, ensure_ascii=False)
+    categories_json = json.dumps(categories, ensure_ascii=False)
+
+    html = f"""
 <!DOCTYPE html>
-<html lang=\"ja\">
+<html lang="ja">
 <head>
-  <meta charset=\"UTF-8\">
+  <meta charset="UTF-8">
   <title>意味空間 Explorer</title>
-  <script src=\"https://cdn.plot.ly/plotly-latest.min.js\"></script>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
   <style>
-    body {{ font-family: sans-serif; }}
-    .control-panel {{ margin-bottom: 1em; display: flex; flex-direction: column; align-items: center; }}
-    .axis-grid {{ display: grid; grid-template-columns: auto auto auto; grid-template-rows: auto auto auto; gap: 0.5em; margin-bottom: 1em; }}
+    body {{ font-family: sans-serif; margin: 0; padding: 0; }}
+    .description {{
+      max-width: 1000px;
+      margin: 0.3em auto 0.5em auto;
+      font-size: 0.95rem;
+      color: #333;
+      text-align: center;
+      white-space: nowrap;
+      overflow-x: auto;
+    }}
+    .control-panel {{
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-bottom: 0.5em;
+    }}
+    .axis-grid {{
+      display: grid;
+      grid-template-columns: auto auto auto;
+      grid-template-rows: auto auto auto;
+      gap: 0.2em;
+      margin-bottom: 0.4em;
+      font-size: 0.95rem;
+    }}
     .axis-grid > * {{ text-align: center; }}
-    .checkboxes {{ display: flex; flex-wrap: wrap; gap: 1em; justify-content: center; margin-bottom: 1em; }}
-    select, button, label {{ font-size: 1rem; padding: 0.2em; margin: 0.2em; }}
-    .description {{ max-width: 800px; margin: 0 auto 1em auto; font-size: 0.95rem; color: #333; }}
+    .checkboxes {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.8em;
+      justify-content: center;
+      margin-bottom: 0.5em;
+    }}
+    .control-row {{
+      display: flex;
+      align-items: center;
+      gap: 0.5em;
+      margin-bottom: 0.3em;
+    }}
+    select, button, label {{
+      font-size: 0.95rem;
+      padding: 0.2em;
+      margin: 0.1em;
+    }}
   </style>
 </head>
 <body>
-  <h1>意味空間 Explorer</h1>
   <div class="description">
-    このツールは、意味的なキーワードをベクトル空間にエンベディングし、2次元に射影することで視覚化する実験的ツールです。
-    OpenAIのtext-embeddingモデル（small/large）で取得したベクトルを、指定した4つの軸語（左右・上下）に基づいて計算し、主観的な意味空間を体験できます。
-    射影はベクトル間の差に基づく直交2軸で構成され、各点はアイテムの意味的位置を示します。アイテム、軸のワードはエンベディング済の情報を埋め込んでいるため更新でAPI利用料はかかりません。
+    意味的なキーワードで意味空間を探索できる可視化ツール
   </div>
 
   <div class="control-panel">
     <div class="axis-grid">
       <div></div>
-      <div>
-        Y軸上: <select id="y0"></select>
-      </div>
+      <div>Y軸上: <select id="y0"></select></div>
       <div></div>
-      <div>
-        X軸左: <select id="x0"></select>
-      </div>
+      <div>X軸左: <select id="x0"></select></div>
       <div></div>
-      <div>
-        X軸右: <select id="x1"></select>
-      </div>
+      <div>X軸右: <select id="x1"></select></div>
       <div></div>
-      <div>
-        Y軸下: <select id="y1"></select>
-      </div>
+      <div>Y軸下: <select id="y1"></select></div>
       <div></div>
     </div>
 
     <div class="checkboxes" id="category-box"></div>
 
-    モデル: <select id="model">
-      <option value="small">small</option>
-      <option value="large">large</option>
-    </select>
-    <button onclick="updatePlot()">更新</button>
+    <div class="control-row">
+      モデル: <select id="model"></select>
+      <button onclick="updatePlot()">更新</button>
+    </div>
   </div>
 
-  <div id="plot" style="width:90vw; height:80vh;"></div>
+  <div id="plot" style="width:90vw; height:60vh;"></div>
 
   <script>
-    const keywordData = {keywords_json};
+    const keywordData = {keyword_json};
     const items = {items_json};
     const categories = {categories_json};
-
     const keys = Object.keys(keywordData);
+    const models = Object.keys(keywordData[keys[0]]);
+
+    const modelSel = document.getElementById("model");
+    models.forEach(m => {{
+      const opt = document.createElement("option");
+      opt.value = m;
+      opt.textContent = m;
+      modelSel.appendChild(opt);
+    }});
+    modelSel.value = models[0];
 
     function fillSelect(id, options, defaultValue) {{
       const sel = document.getElementById(id);
       sel.innerHTML = "";
       options.forEach(v => {{
         const opt = document.createElement("option");
-        opt.value = v; opt.textContent = v;
+        opt.value = v;
+        opt.textContent = v;
         if (v === defaultValue) opt.selected = true;
         sel.appendChild(opt);
       }});
     }}
-
     fillSelect("x0", keys, "甘い");
     fillSelect("x1", keys, "辛い");
     fillSelect("y0", keys, "冷たい");
@@ -115,13 +175,10 @@ html = f"""
       categoryBox.appendChild(label);
     }});
 
-    document.getElementById("model").value = "large";
-
     function normalize(vec) {{
       const norm = Math.sqrt(vec.reduce((a,b) => a + b*b, 0));
       return vec.map(x => x / norm);
     }}
-
     function dot(vec1, vec2) {{
       return vec1.reduce((a,b,i) => a + b * vec2[i], 0);
     }}
@@ -132,17 +189,20 @@ html = f"""
       const y0 = document.getElementById("y0").value;
       const y1 = document.getElementById("y1").value;
       const model = document.getElementById("model").value;
-
       const selectedCategories = Array.from(document.querySelectorAll("#category-box input:checked")).map(cb => cb.value);
+
       const axisX = normalize(keywordData[x1][model].map((v, i) => v - keywordData[x0][model][i]));
       const axisY = normalize(keywordData[y0][model].map((v, i) => v - keywordData[y1][model][i]));
 
-      const filtered = items.filter(row => selectedCategories.includes(row["カテゴリ"]));
-
-      const xs = filtered.map(row => dot(row[model], axisX));
-      const ys = filtered.map(row => dot(row[model], axisY));
-      const texts = filtered.map(row => row.絵文字 || "□");
-      const hovers = filtered.map(row => row.内容);
+      const xs = [], ys = [], texts = [], hovers = [];
+      for (const row of items) {{
+        if (!row[model]) continue;
+        if (!selectedCategories.includes(row["カテゴリ"])) continue;
+        xs.push(dot(row[model], axisX));
+        ys.push(dot(row[model], axisY));
+        texts.push(row["絵文字"] || "□");
+        hovers.push(row["内容"]);
+      }}
 
       const trace = {{
         x: xs, y: ys, text: texts, hovertext: hovers,
@@ -150,18 +210,20 @@ html = f"""
       }};
 
       Plotly.newPlot("plot", [trace], {{
-        title: `モデル=${{model}}`,
-        margin: {{ l: 50, r: 50, t: 100, b: 80 }},
+        margin: {{ l: 50, r: 50, t: 20, b: 80 }},
         xaxis: {{}}, yaxis: {{}}
       }});
     }}
 
-    updatePlot();  // 初期表示
+    updatePlot();
   </script>
 </body>
 </html>
 """
 
-# 保存
-Path(HTML_OUTPUT_PATH).write_text(html, encoding="utf-8")
-print(f"✅ HTML 出力完了: {HTML_OUTPUT_PATH}")
+    out_path = base_dir / "embedding_explorer.html"
+    out_path.write_text(html, encoding="utf-8")
+    print(f"✅ HTML 出力完了: {out_path}")
+
+if __name__ == "__main__":
+    main()

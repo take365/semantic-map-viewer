@@ -2,93 +2,150 @@
 
 ## 概要
 
-このプロジェクトは、テキスト情報に基づいてアイテム（食べ物、施設、職業など）をベクトル化し、意味的な「軸語（例：宗教⇔行政、文化⇔かわいい）」に射影して散布図として可視化します。また、任意の検索語に対する意味的類似アイテムの検索も可能です。
+このプロジェクトは、テキスト情報（食べ物、施設、職業など）をベクトル化し，
+意味的な「軸語（例：甘い⇌辛い、冷たい⇌熱い）」に射射して視覚的に分類・探索するツールです。
+
+OpenAIやローカルモデルを使ったエンベディングと、Plotlyによるインタラクティブな可視化を提供します。
+
+---
 
 ## 主な特徴
 
-- OpenAI埋め込みモデル（small/large）を用いたベクトル生成
-- 指定した「軸語」に沿った意味空間への射影（2軸プロット）
-- カテゴリ別アイテムのフィルタと可視化
-- 入力語に対する類似アイテムの検索（cos類似度）
-- 結果はHTMLで出力、ブラウザ上で閲覧可能
+* OpenAI基盤モデル対応 (`text-embedding-3-small`, `text-embedding-3-large`)
+* ローカルモデル（sentence-transformers 等）互換
+* 任意の軸語に基づく意味空間プロット
+* カテゴリフィルタやモデル切り替えで視点換えが可能
+* 類似アイテム検索（cos類似度）にも対応
 
-## 使用技術
+---
 
-- Python 3
-- OpenAI Embedding API (`text-embedding-3-small`, `text-embedding-3-large`)
-- Plotly（散布図描画）
-- dotenv（APIキーなど環境設定）
-- pandas / numpy / pickle（データ管理）
-
-## ディレクトリ構成
+## フォルダ構成（例）
 
 ```
 project/
 ├── data/
-│   ├── items.csv               # 入力データ（カテゴリ・内容・絵文字）
-│   ├── embedded_items.pkl      # 埋め込み済みデータ（自動生成）
-│   └── embed_cache.pkl         # ベクトルキャッシュ（自動生成）
-├── scripts/
-│   ├── llm.py                  # 埋め込みやLLMへのリクエストラッパー
-├── plot_embedding_scatter.py   # 散布図作成スクリプト
-├── embed_items.py              # エンベディング生成スクリプト
-├── run_search.py               # 意味検索スクリプト
+│   └── sample/
+│       ├── args.csv                     # 入力コメント
+│       ├── keyword.csv                  # 軸語の定義
+│       ├── embedded_items_sample.pkl    # テキスト基づくベクトル
+│       ├── keyword_embed_*.pkl          # 軸語の方向ベクトル
+│       └── embedding_explorer.html      # 視覚化 UI
+├── embed_items.py                       # 基本エンベディング
+├── generate_axis_embeddings.py          # 軸語ベクトル生成
+├── generate_interactive_html.py         # HTML 出力
+├── run_search.py                        # 類似検索スクリプト
 ```
 
-## セットアップ手順
+---
 
-1. 🔑 APIキー設定（OpenAI）
+## セットアップ
 
-OpenAIの埋め込みモデルを利用するために、以下の環境変数を設定してください：
+### 1. 🔑 OpenAI APIキー
 
-```bash
-# システム環境変数として設定（推奨）
-export OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+`.env` または環境変数で下記を指定
 
-2. 必要なライブラリをインストール
+```
+OPENAI_API_KEY=sk-xxxxxxxxxxxxxx
+```
+
+---
+
+### 2. ライブラリインストール
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. `data/items.csv` に「カテゴリ」「内容」「絵文字」列を記入し準備
+---
 
-4. 埋め込み生成
+## 基本フロー: 基本ベクトル化 → 軸語ベクトル → HTML
 
-```bash
-python embed_items.py
-```
-
-5. 散布図作成
+### 1. 基本テキストのベクトル化
 
 ```bash
-python plot_embedding_scatter.py
-# → embedding_scatter.html が出力され、ブラウザで閲覧可能
+python embed_items.py sample
 ```
 
-6. 類似アイテム検索
-
-```bash
-python run_search.py
-# → 検索結果が search_log_*.txt に出力されます
-```
-
-## 例
-
-**軸語設定例：**
-- X軸：「宗教」⇔「行政」
-- Y軸：「文化」⇔「かわいい」
-
-**カテゴリ例：**
-- 動物・魚
-- 施設
-- 職業
-- 素材
-- 料理
-
-## 補足
-
-- キャッシュ機能により、同じ語のベクトル取得を省略可能
+* 複数モデルによるベクトル化（OpenAI + ローカル）
+* 出力: `embedded_items_sample.pkl`, `embeddings_model名.pkl`
 
 ---
 
+### 2. 軸語ベクトルの生成
+
+```bash
+python generate_axis_embeddings.py sample
+```
+
+* `keyword.csv` に定義された軸語を方向ベクトル化
+* 出力: `keyword_embed_model.pkl`
+
+---
+
+### 3. 可視化 HTML (意味空間 Explorer)
+
+```bash
+python generate_interactive_html.py sample
+```
+
+* 出力: `embedding_explorer.html`
+* 任意の4軸、モデル、カテゴリに基づく散布図がブラウザ上で表示されます
+
+---
+
+## 入力CSVの例
+
+### args.csv
+
+| argument    | カテゴリ | 絵文字 |
+| ----------- | ---- | --- |
+| おにぎりが大好きです。 | 料理   | 🍙  |
+| 学校で働いています。  | 職業   | 🏫  |
+
+### keyword.csv
+
+| axis | side  | keyword |
+| ---- | ----- | ------- |
+| 味    | left  | 甘い      |
+| 味    | right | 辛い      |
+| 温度感  | left  | 冷たい     |
+| 温度感  | right | 熱い      |
+
+---
+
+## 類似アイテム検索（オプション）
+
+```bash
+python run_search.py
+```
+
+* クエリ語とのcos類似度に基づき、類似アイテムをランキング表示
+* 出力ファイル：`search_log_YYYYMMDD_*.txt`
+
+---
+
+## 対応済みモデル
+
+* `openai/text-embedding-3-small`
+* `openai/text-embedding-3-large`
+* `sentence-transformers/paraphrase-multilingual-mpnet-base-v2`
+* `sbintuitions/sarashina-embedding-v1-1b`
+* `cl-nagoya/ruri-v3-310m`
+
+`embed_items.py` の `MODELS` に追記すれば拡張可能
+
+---
+
+## ライセンス
+
+MIT License
+
+---
+
+## 賛助 & PR 歓迎
+
+* 軸語パターンの強化
+* 新モデルの追加
+* 評価指標（シルエットスコアなど）の導入
+
+不明点や改善アイデアは歓迎です！

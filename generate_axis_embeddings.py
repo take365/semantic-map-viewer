@@ -1,44 +1,61 @@
 import os
 import pickle
+import argparse
 import pandas as pd
-import numpy as np
-from llm import request_to_embed
+from pathlib import Path
+from llm import request_to_embed, request_to_local_embed
+from embed_items import MODELS  # 同じモデル一覧を共有
 
-# ─── ファイルパス ─────────────────────────────
-KEYWORD_PATH = "data/keyword.csv"
-CACHE_PATH = "data/embed_cache.pkl"
-OUTPUT_PATH = "data/embed_keyword.pkl"
+def main():
+    parser = argparse.ArgumentParser(description="キーワードを複数モデルで埋め込み")
+    parser.add_argument("folder", help="data 配下のサブフォルダ名 (例: sample, overflow)")
+    args = parser.parse_args()
 
-# ─── CSV読み込み ────────────────────────────────
-df = pd.read_csv(KEYWORD_PATH)
-keywords = df["キーワード"].dropna().unique().tolist()
+    base_dir = Path(__file__).parent / "data" / args.folder
+    base_dir.mkdir(parents=True, exist_ok=True)
+    keyword_path = base_dir / "keyword.csv"
+    if not keyword_path.exists():
+        raise FileNotFoundError(f"キーワードファイルが見つかりません: {keyword_path}")
 
-# ─── キャッシュ読み込み or 初期化 ───────────────
-if os.path.exists(CACHE_PATH):
-    with open(CACHE_PATH, "rb") as f:
-        embed_cache = pickle.load(f)
-else:
-    embed_cache = {}
+    df = pd.read_csv(keyword_path)
+    keywords = df["keyword" if "keyword" in df.columns else "キーワード"].dropna().unique().tolist()
 
-# ─── 埋め込み処理 ──────────────────────────────
-results = {}
-for kw in keywords:
-    if kw in embed_cache:
-        small, large = embed_cache[kw]
-        print(f"✅ キャッシュ使用: {kw}")
-    else:
-        print(f"🆕 埋め込み取得: {kw}")
-        small = request_to_embed([kw], model="text-embedding-3-small")[0]
-        large = request_to_embed([kw], model="text-embedding-3-large")[0]
-        embed_cache[kw] = (small, large)
-    results[kw] = {"small": small, "large": large}
+    for model_name in MODELS:
+        model_key = model_name.replace("/", "_")
+        cache_path = base_dir / f"embed_cache_{model_key}.pkl"
+        out_path = base_dir / f"keyword_embed_{model_key}.pkl"
 
-# ─── キャッシュ保存 ─────────────────────────────
-with open(CACHE_PATH, "wb") as f:
-    pickle.dump(embed_cache, f)
+        # キャッシュ読み込み
+        if cache_path.exists():
+            with open(cache_path, "rb") as f:
+                embed_cache = pickle.load(f)
+        else:
+            embed_cache = {}
 
-# ─── 結果保存（HTML埋め込み用） ───────────────
-with open(OUTPUT_PATH, "wb") as f:
-    pickle.dump(results, f)
+        # 埋め込み取得
+        results = {}
+        for kw in keywords:
+            if kw in embed_cache:
+                vec = embed_cache[kw]
+                print(f"✅ キャッシュ使用: {kw}")
+            else:
+                print(f"🆕 埋め込み取得: {kw}")
+                if model_name.startswith("openai/"):
+                    vec = request_to_embed([kw], model_name.replace("openai/", ""))[0]
+                else:
+                    vec = request_to_local_embed([kw], model_name)[0]
+                embed_cache[kw] = vec
+            results[kw] = vec
 
-print(f"✅ 出力完了: {OUTPUT_PATH}")
+        # キャッシュ保存
+        with open(cache_path, "wb") as f:
+            pickle.dump(embed_cache, f)
+
+        # 結果保存
+        with open(out_path, "wb") as f:
+            pickle.dump(results, f)
+
+        print(f"✅ 出力完了: {out_path}")
+
+if __name__ == "__main__":
+    main()
